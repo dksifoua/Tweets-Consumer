@@ -1,7 +1,8 @@
 import json
-from datetime import datetime
 
 from src.logger import Logger
+from src.text_processing import TextProcessing
+from src.utils import flatten
 
 import findspark
 
@@ -13,25 +14,16 @@ from pyspark.sql.types import Row
 from pyspark.streaming import StreamingContext
 from pyspark.streaming.kafka import KafkaUtils
 
-from src.text_processing import TextProcessing
-
-
-def flatten(x):
-    res = x[1]
-    res['category'] = x[0]
-    return res
-
 
 def save_to_db(rdd):
     if not rdd.isEmpty():
         df = rdd.map(flatten).map(lambda x: Row(**x)).toDF()
-        # df.write \
-        #     .format('com.mongodb.spark.sql.DefaultSource') \
-        #     .mode('append') \
-        #     .option('database', 'dynamas') \
-        #     .option('collection', 'tweets') \
-        #     .save()
-        Logger.get_instance().debug(f'{df.count()} Tweets saved in MongoDB')
+        df.write \
+            .format('com.mongodb.spark.sql.DefaultSource') \
+            .mode('append') \
+            .option('database', 'dynamas') \
+            .option('collection', 'tweets') \
+            .save()
     return rdd
 
 
@@ -44,7 +36,6 @@ if __name__ == '__main__':
         .config("spark.mongodb.input.uri", "mongodb://localhost:27017/") \
         .config("spark.mongodb.output.uri", "mongodb://localhost:27017/") \
         .getOrCreate()
-
     Logger.get_instance().info('Contexts initialized!')
 
     kafka_stream = KafkaUtils.createDirectStream(ssc, TOPICS, {"metadata.broker.list": 'localhost:9092'})
@@ -62,7 +53,11 @@ if __name__ == '__main__':
         .map(lambda x: (x[0], TextProcessing.lower_case(x[1]))) \
         .map(lambda x: (x[0], TextProcessing.lemmatize(x[1])))
 
-    # stock_tweets = tweets.filter(lambda x: 'Stock' in x[1]).
+    nbr_tweets = tweets.map(lambda x: (x[0], 1)) \
+        .reduceByKey(lambda x, y: x + y) \
+        .pprint()
+
+    tweets.foreachRDD(save_to_db)
 
     ssc.start()
     ssc.awaitTermination()
