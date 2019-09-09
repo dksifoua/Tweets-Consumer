@@ -1,4 +1,8 @@
+import threading
+
+
 class Singleton:
+    __lock = threading.Lock()
     __instance = None
 
     def __init__(self):

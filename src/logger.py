@@ -5,7 +5,7 @@ from src.singleton import Singleton
 
 
 class Logger(Singleton):
-    __FORMAT = '%(asctime)s - %(levelname)s - (%(threadName)s) - %(message)s'
+    __FORMAT = '%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s'
 
     def __init__(self, name: str = __name__):
         super().__init__()

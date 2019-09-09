@@ -13,6 +13,8 @@ from pyspark.sql.types import Row
 from pyspark.streaming import StreamingContext
 from pyspark.streaming.kafka import KafkaUtils
 
+from src.text_processing import TextProcessing
+
 
 def flatten(x):
     res = x[1]
@@ -20,7 +22,7 @@ def flatten(x):
     return res
 
 
-def process_rdd(rdd):
+def save_to_db(rdd):
     if not rdd.isEmpty():
         df = rdd.map(flatten).map(lambda x: Row(**x)).toDF()
         # df.write \
@@ -45,8 +47,22 @@ if __name__ == '__main__':
 
     Logger.get_instance().info('Contexts initialized!')
 
-    kafkaStream = KafkaUtils.createDirectStream(ssc, TOPICS, {"metadata.broker.list": 'localhost:9092'})
-    kafkaStream.map(lambda x: (x[0], json.loads(x[1]))).foreachRDD(process_rdd)
+    kafka_stream = KafkaUtils.createDirectStream(ssc, TOPICS, {"metadata.broker.list": 'localhost:9092'})
+    tweets = kafka_stream.map(lambda x: (x[0], json.loads(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_url(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_html_tag(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_user_tag(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_hash_tag(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_emojis(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_emoticons(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_punctuation(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.expand_abbreviation(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.expand_contract_word(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.remove_double_space(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.lower_case(x[1]))) \
+        .map(lambda x: (x[0], TextProcessing.lemmatize(x[1])))
+
+    # stock_tweets = tweets.filter(lambda x: 'Stock' in x[1]).
 
     ssc.start()
     ssc.awaitTermination()
