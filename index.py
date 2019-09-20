@@ -53,11 +53,16 @@ if __name__ == '__main__':
         .map(lambda x: (x[0], TextProcessing.lower_case(x[1]))) \
         .map(lambda x: (x[0], TextProcessing.lemmatize(x[1])))
 
+    # Display computation time {For now, the latency is one second maximum}
+    # from datetime import datetime
+    # tweets.map(lambda x: f'{datetime.now().time()} - {x[1]["created_at"]}').pprint()
+
+    # Display the number of tweets by topic
     nbr_tweets = tweets.map(lambda x: (x[0], 1)) \
         .reduceByKey(lambda x, y: x + y) \
         .pprint()
 
-    tweets.foreachRDD(save_to_db)
+    tweets_to_db = tweets.foreachRDD(save_to_db)
 
     ssc.start()
     ssc.awaitTermination()
