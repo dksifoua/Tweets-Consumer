@@ -1,68 +1,48 @@
-import json
-
-from src.logger import Logger
-from src.text_processing import TextProcessing
-from src.utils import flatten
-
-import findspark
-
-findspark.init('C:\opt\spark-2.4.3-bin-hadoop2.7')
-
-from pyspark import SparkContext
 from pyspark.sql import SparkSession
-from pyspark.sql.types import Row
-from pyspark.streaming import StreamingContext
-from pyspark.streaming.kafka import KafkaUtils
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
 
-
-def save_to_db(rdd):
-    if not rdd.isEmpty():
-        df = rdd.map(flatten).map(lambda x: Row(**x)).toDF()
-        df.write \
-            .format('com.mongodb.spark.sql.DefaultSource') \
-            .mode('append') \
-            .option('database', 'dynamas') \
-            .option('collection', 'tweets') \
-            .save()
-    return rdd
-
+from src.foreach_writer import ForeachWriter
 
 if __name__ == '__main__':
-    TOPICS = ['Financial', 'Trend', 'Stock.AAPL', 'Stock.MSFT', 'Stock.GOOGL']
+    TOPICS = ['Financial', 'Trend', 'Tweet.AAPL', 'Tweet.MSFT', 'Tweet.GOOGL', 'Tweet.GS', 'Tweet.WMT']
+    BOOTSTRAP_SERVERS = "localhost:9092"
 
-    sc = SparkContext.getOrCreate()
-    ssc = StreamingContext(sc, 1)
-    spark = SparkSession.builder \
-        .config("spark.mongodb.input.uri", "mongodb://localhost:27017/") \
-        .config("spark.mongodb.output.uri", "mongodb://localhost:27017/") \
+    tweet_schema = StructType([
+        StructField("created_at", StringType(), nullable=False),
+        StructField("user_name", StringType(), nullable=False),
+        StructField("user_screen_name", StringType(), nullable=False),
+        StructField("user_favourites_count", IntegerType(), nullable=False),
+        StructField("user_followers_count", IntegerType(), nullable=False),
+        StructField("user_friends_count", IntegerType(), nullable=False),
+        StructField("user_statuses_count", IntegerType(), nullable=False),
+        StructField("favorite_count", IntegerType(), nullable=False),
+        StructField("quote_count", IntegerType(), nullable=False),
+        StructField("reply_count", IntegerType(), nullable=False),
+        StructField("retweet_count", IntegerType(), nullable=False),
+        StructField("text", StringType(), nullable=False),
+    ])
+
+    spark = SparkSession \
+        .builder \
+        .master("local[*]") \
+        .appName('dynamas') \
         .getOrCreate()
-    Logger.get_instance().info('Contexts initialized!')
 
-    kafka_stream = KafkaUtils.createDirectStream(ssc, TOPICS, {"metadata.broker.list": 'localhost:9092'})
-    tweets = kafka_stream.map(lambda x: (x[0], json.loads(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_url(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_html_tag(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_user_tag(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_hash_tag(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_emojis(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_emoticons(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_punctuation(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.expand_abbreviation(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.expand_contract_word(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.remove_double_space(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.lower_case(x[1]))) \
-        .map(lambda x: (x[0], TextProcessing.lemmatize(x[1])))
+    for topic in TOPICS:
+        df_stream = spark.readStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", BOOTSTRAP_SERVERS) \
+            .option("subscribe", topic) \
+            .option("startingOffsets", "latest") \
+            .load() \
+            .selectExpr("CAST(value AS STRING)", "CAST(timestamp AS timestamp)")
 
-    # Display computation time {For now, the latency is one second maximum}
-    # from datetime import datetime
-    # tweets.map(lambda x: f'{datetime.now().time()} - {x[1]["created_at"]}').pprint()
+        df_tweets = df_stream.select(from_json(col=df_stream.value, schema=tweet_schema).alias("tweets"),
+                                     df_stream.timestamp) \
+            .select("tweets.*", "timestamp") \
+            .writeStream \
+            .foreach(ForeachWriter(collection=topic)) \
+            .start()
 
-    # Display the number of tweets by topic
-    nbr_tweets = tweets.map(lambda x: (x[0], 1)) \
-        .reduceByKey(lambda x, y: x + y) \
-        .pprint()
-
-    tweets_to_db = tweets.foreachRDD(save_to_db)
-
-    ssc.start()
-    ssc.awaitTermination()
+    spark.streams.awaitAnyTermination()

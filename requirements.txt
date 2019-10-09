@@ -1,1 +1,4 @@
-findspark==1.3.0
+nltk
+pymongo
+pyspark
+PyArrow==0.15.0
